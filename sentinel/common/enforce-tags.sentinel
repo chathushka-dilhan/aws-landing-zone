@@ -1,0 +1,37 @@
+import "tfplan/v2" as tfplan
+import "strings"
+
+# A list of mandatory tags that all specified resources must have.
+param mandatory_tags default ["owner", "cost-center"]
+
+# The list of resource types this policy applies to.
+param resource_types default [
+	"aws_instance",
+	"aws_vpc",
+	"aws_s3_bucket",
+	"aws_db_instance",
+	"aws_subnet",
+	"aws_nat_gateway",
+]
+
+# Find all resources matching the types defined above that are being created or updated.
+all_resources = filter tfplan.resource_changes as _, rc {
+	rc.mode is "managed" and
+		rc.type in resource_types and
+		(rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Rule: Check that each resource has all mandatory tags.
+main = rule {
+	all all_resources as _, r {
+		all mandatory_tags as _, t {
+			r.change.after.tags[t] is not null and r.change.after.tags[t] is not ""
+		}
+	} else {
+		# If the 'else' block is reached, it means the 'all' condition was false.
+		# This provides a more helpful error message.
+		error_message = "All resources must have non-empty mandatory tags: " + strings.join(mandatory_tags, ", ")
+		print(error_message)
+		false
+	}
+}

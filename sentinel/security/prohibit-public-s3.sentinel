@@ -1,0 +1,30 @@
+import "tfplan/v2" as tfplan
+
+# Find all S3 bucket resources being created.
+all_s3_buckets = filter tfplan.resource_changes as _, rc {
+	rc.type is "aws_s3_bucket" and rc.change.actions contains "create"
+}
+
+# Find all S3 public access block resources being created or updated.
+all_s3_pabs = filter tfplan.resource_changes as _, rc {
+	rc.type is "aws_s3_bucket_public_access_block" and
+		(rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Rule 1: Check for dangerous ACLs on the bucket itself.
+violating_acls = filter all_s3_buckets as _, b {
+	b.change.after.acl in ["public-read", "public-read-write"]
+}
+
+# Rule 2: Check for public access blocks that are explicitly set to be permissive.
+permissive_pabs = filter all_s3_pabs as _, p {
+	p.change.after.block_public_acls is false or
+		p.change.after.block_public_policy is false or
+		p.change.after.ignore_public_acls is false or
+		p.change.after.restrict_public_buckets is false
+}
+
+# Main rule: The plan is valid only if both lists of violating resources are empty.
+main = rule {
+	length(violating_acls) is 0 and length(permissive_pabs) is 0
+}

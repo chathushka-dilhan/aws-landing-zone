@@ -1,0 +1,7 @@
+# Define a policy set for standard infrastructure checks.
+# Enforcement level "hard-mandatory" means a failure will stop the CI/CD pipeline.
+
+policy "infra-standard" {
+  source = "./" # Check all policies in the current directory and subdirectories
+  enforcement_level = "hard-mandatory"
+}

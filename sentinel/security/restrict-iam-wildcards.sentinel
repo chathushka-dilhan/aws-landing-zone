@@ -1,0 +1,55 @@
+import "tfplan/v2" as tfplan
+import "json"
+
+# Find all IAM policies being created or updated.
+all_iam_policies = filter tfplan.resource_changes as _, rc {
+	(rc.type is "aws_iam_policy" or rc.type is "aws_iam_role_policy") and
+		(rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# A helper function to check a single policy statement for wildcards.
+statement_is_violating = func(statement) {
+	# Check if effect is "Allow"
+	if statement.Effect is not "Allow" {
+		return false
+	}
+
+	# Check for Action wildcards
+	actions = statement.Action
+	if type(actions) is "string" and actions is "*" {
+		return true
+	}
+	if type(actions) is "list" and "*" in actions {
+		return true
+	}
+
+	# Check for Resource wildcards
+	resources = statement.Resource
+	if type(resources) is "string" and resources is "*" {
+		return true
+	}
+	if type(resources) is "list" and "*" in resources {
+		return true
+	}
+
+	return false
+}
+
+# Main rule: Iterate through all policies and their statements.
+main = rule {
+	all all_iam_policies as _, p {
+		# The policy document is a JSON string, so we must unmarshal it.
+		policy_doc = json.unmarshal(p.change.after.policy)
+
+		# Statements can be a single object or a list of objects.
+		statements = type(policy_doc.Statement) is "list" ? policy_doc.Statement : [policy_doc.Statement]
+
+		# Ensure no statement in the policy is violating.
+		all statements as _, s {
+			statement_is_violating(s) is false
+		}
+	} else {
+		print("Error: IAM policies cannot contain statements with Effect='Allow' and Action='*' or Resource='*'.")
+		false
+	}
+}

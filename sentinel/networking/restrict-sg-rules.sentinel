@@ -1,0 +1,37 @@
+import "tfplan/v2" as tfplan
+
+# Find all Security Group Rules that are being created.
+all_sg_rules = filter tfplan.resource_changes as _, rc {
+	rc.type is "aws_security_group_rule" and
+		rc.change.actions contains "create"
+}
+
+# Define a list of ports that should never be open to the world.
+restricted_ports = [22, 3389]
+
+# A helper function to check if a port is in the restricted list.
+is_port_restricted = func(from, to) {
+	for restricted_ports as p {
+		if p >= from and p <= to {
+			return true
+		}
+	}
+	return false
+}
+
+# Rule: No ingress rule can have a CIDR block of "0.0.0.0/0" for a restricted port.
+main = rule {
+	all all_sg_rules as address, r {
+		# This rule only applies to ingress rules.
+		r.change.after.type is "ingress" and
+			# If cidr_blocks is not set or empty, this rule doesn't apply.
+			(r.change.after.cidr_blocks is null or
+				# Check if "0.0.0.0/0" is NOT in the list of CIDR blocks.
+				"0.0.0.0/0" not in r.change.after.cidr_blocks or
+				# If it IS in the list, then the ports must NOT be restricted.
+				(is_port_restricted(r.change.after.from_port, r.change.after.to_port) is false))
+	} else {
+		print("Error: Security groups cannot allow ingress from 0.0.0.0/0 on ports 22 (SSH) or 3389 (RDP).")
+		false
+	}
+}
