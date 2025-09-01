@@ -1,5 +1,7 @@
 # AWS Landing Zone using Terraform
 
+![alt text](./docs/banner.png "banner")
+
 This project uses Terraform to build and manage a secure, multi-account AWS environment based on best practices.
 
 - [Architectural Overview & Design Decisions](./docs/architecture.md)
