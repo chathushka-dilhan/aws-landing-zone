@@ -1,0 +1,1 @@
+# No variables needed for this basic setup, but could be extended for OU names, additional SCPs, etc.
