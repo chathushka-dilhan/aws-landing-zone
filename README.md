@@ -2,6 +2,8 @@
 
 This project uses Terraform to build and manage a secure, multi-account AWS environment based on best practices.
 
+- [Architectural Overview & Design Decisions](./docs/architecture.md)
+
 ## ✨ Core Features
 
 - **Multi-Account Structure:** Uses AWS Organizations to isolate workloads into Security, Networking, and Application accounts.
@@ -38,7 +40,4 @@ terraform apply
 ```
 
 After this, all other deployments are handled through the GitHub Pull Request workflow.
-
-**NOTE: Architecture document is in progress**
-
 
