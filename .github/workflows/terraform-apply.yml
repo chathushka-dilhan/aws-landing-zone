@@ -1,0 +1,77 @@
+# terraform-apply.yml
+
+name: 'Terraform Apply'
+
+on:
+  # Trigger on pushes (merges) to the main branch
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/live/**'
+  
+  workflow_dispatch:
+
+# OIDC permissions
+permissions:
+  id-token: write
+  contents: read
+
+# Ensure only one apply job runs at a time to prevent state corruption
+concurrency: terraform_apply
+
+jobs:
+  # This job identifies which 'live' directories were changed in the latest push
+  get-changed-dirs:
+    name: 'Get Changed Directories'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.changes.outputs.matrix }}
+    steps:
+      - name: 'Checkout Code'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # Fetch the last 2 commits to compare changes
+
+      - name: 'Find Changed Directories'
+        id: changes
+        run: |
+          # Get a list of all directories in 'terraform/live' that were modified
+          changed_dirs=$(git diff --name-only HEAD~1 HEAD | grep 'terraform/live/' | sed -e 's|\(terraform/live/[^/]*\).*|\1|' | sort -u | jq -R -s -c 'split("\n")[:-1]')
+          echo "Changed directories: $changed_dirs"
+          echo "matrix=$changed_dirs" >> $GITHUB_OUTPUT
+
+  # This job runs 'terraform apply' on the directories identified by the previous job
+  apply:
+    name: 'Terraform Apply (${{ matrix.working-dir }})'
+    needs: get-changed-dirs
+    if: needs.get-changed-dirs.outputs.matrix != '[]' # Only run if there are changes
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        working-dir: ${{ fromJson(needs.get-changed-dirs.outputs.matrix) }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.working-dir }}
+
+    steps:
+      - name: 'Checkout Code'
+        uses: actions/checkout@v4
+
+      - name: 'Install HashiCorp Tools'
+        uses: hashicorp/setup-cli@v2
+
+      - name: 'Configure AWS Credentials via OIDC'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 'Terraform Init'
+        run: terraform init
+
+      - name: 'Terraform Apply'
+        run: terraform apply -auto-approve

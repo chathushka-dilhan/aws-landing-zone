@@ -1,0 +1,96 @@
+# terraform-plan.yml
+
+name: 'Terraform Plan & Sentinel Check'
+
+on:
+  # Trigger on pull requests targeting the main branch
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - 'sentinel/**'
+  
+  # Allow manual triggering from the GitHub UI
+  workflow_dispatch:
+
+# Permissions needed for OIDC and for posting PR comments
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    name: 'Terraform Plan'
+    runs-on: ubuntu-latest
+    
+    # Use a matrix to run a job for each 'live' directory.
+    # This parallelizes the work and gives clear, separate status checks.
+    strategy:
+      matrix:
+        working-dir: 
+          - terraform/live/management
+          - terraform/live/networking
+          - terraform/live/security
+          - terraform/live/workloads/prod
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.working-dir }}
+
+    steps:
+      - name: 'Checkout Code'
+        uses: actions/checkout@v4
+
+      - name: 'Install HashiCorp Tools (Terraform & Sentinel)'
+        uses: hashicorp/setup-cli@v2
+
+      - name: 'Configure AWS Credentials via OIDC'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }} # Store Role ARN in GitHub Secrets
+          aws-region: ${{ secrets.AWS_REGION }}             # Store AWS Region in GitHub Secrets
+
+      - name: 'Terraform Init'
+        id: init
+        run: terraform init
+
+      - name: 'Terraform Validate'
+        id: validate
+        run: terraform validate -no-color
+
+      - name: 'Terraform Plan'
+        id: plan
+        run: terraform plan -no-color -out=tfplan.binary
+        continue-on-error: true # Continue so we can post the plan output even if it fails
+
+      - name: 'Convert Plan to JSON'
+        id: plan-json
+        run: terraform show -json tfplan.binary > tfplan.json
+
+      - name: 'Run Sentinel Policy Checks'
+        id: sentinel
+        run: |
+          sentinel apply -config=../../../sentinel/sentinel.hcl tfplan.json
+        # This step will fail the job if Sentinel policies are violated.
+
+      - name: 'Update PR Comment with Plan'
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { plan } = require(`${process.env.GITHUB_WORKSPACE}/.github/workflows/helpers/plan-comment.js`);
+            await plan(github, context, '${{ matrix.working-dir }}', {
+              init: `${{ steps.init.outcome }}`,
+              validate: `${{ steps.validate.outcome }}`,
+              plan: `${{ steps.plan.outcome }}`,
+              sentinel: `${{ steps.sentinel.outcome }}`,
+              plan_output: `${{ steps.plan.outputs.stdout }}`
+            });
+
+      - name: 'Check Plan Status'
+        if: steps.plan.outcome == 'failure'
+        run: exit 1 # Fail the job if the plan step failed
